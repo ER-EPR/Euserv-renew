@@ -3,9 +3,9 @@ on:
   push:
     branches:
       - main
-  schedule:
+  #schedule:
         # Runs everyday at 1:00 AM
-        - cron: "0 1 * * *"
+        #- cron: "0 1 * * *"
 
 permissions:
   contents: write
