@@ -1,0 +1,74 @@
+name: 'Test Gmail API'
+
+on:
+  workflow_dispatch:
+  #push:
+  #  branches:
+  #    - main
+  #schedule:
+  #  - cron: '50 4 * * *'
+
+
+permissions:
+  contents: write
+
+jobs:
+        
+  copy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      #- name: Set up Node.js
+      #  uses: actions/setup-node@v4
+      #  with:
+      #    node-version: "latest"
+
+      - name: Clone gmail_api
+        run: |
+          wget -O gmail_api.py https://raw.githubusercontent.com/SAOJSM/EU_CHICK_EXTEND_CHT/refs/heads/main/gmail_api.py
+      
+      - name: Clone eu
+        run: |
+          wget -O eu.py https://raw.githubusercontent.com/SAOJSM/EU_CHICK_EXTEND_CHT/refs/heads/main/eu.py
+      
+
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          branch: main
+          commit_message: ':arrow_up: update latest edgetunnel'
+          commit_author: 'github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
+          push_options: '--set-upstream'
+  auto_renew:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Use the secret
+        run: |
+          echo "The username is ${{ secrets.USERNAME }}"
+          echo "The password is ${{ secrets.PASSWORD }}"
+        
+      - name: 'Checkout codes'
+        uses: actions/checkout@v2
+
+      - name: 'Set python'
+        uses: actions/setup-python@v1
+        with:
+          python-version: '3.x'
+
+      - name: 'Install dependencies'
+        run: |
+          python -m pip install --upgrade google-api-python-client
+          python -m pip install --upgrade google-auth-httplib2 
+          python -m pip install --upgrade google-auth-oauthlib
+          python -m pip install --upgrade requests
+          python -m pip install --upgrade beautifulsoup4
+          python -m pip install --upgrade pysocks
+
+      - name: 'Auto_renew'
+        env:
+          USERNAME: ${{ secrets.USERNAME }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+        run: python gmail_api.py stayawake.xc@gmail.com
