@@ -1,8 +1,9 @@
 name: Build Obfuscate edgetunnel
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+  #push:
+  #  branches:
+  #    - main
   #schedule:
         # Runs everyday at 1:00 AM
         #- cron: "0 1 * * *"
