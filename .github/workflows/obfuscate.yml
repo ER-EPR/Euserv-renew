@@ -4,9 +4,9 @@ on:
   #push:
   #  branches:
   #    - main
-  #schedule:
-        # Runs everyday at 1:00 AM
-        #- cron: "0 1 * * *"
+  schedule:
+        # Runs every 1st day at 00:00 AM
+        - cron: '0 0 1 * *'
 
 permissions:
   contents: write
@@ -52,6 +52,9 @@ jobs:
           --transform-object-keys true \
           --unicode-escape-sequence true
 
+      - name: 'Avoid Github Workflow being suspended'
+        run: echo $(cat /proc/sys/kernel/random/uuid) > UUID.txt
+        
       - name: Commit changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
