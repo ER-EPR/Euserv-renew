@@ -275,13 +275,14 @@ def get_verification_code(service, email_id, request_time):
     email = service.users().messages().get(userId='me', id=email_id.get('id')).execute()
     internalDate = float(email.get("internalDate")) / 1000
 
-    if internalDate > request_time-8:
+    if internalDate > request_time - 8:
         if email.get('payload').get('body').get('size'):
             data = urlsafe_b64decode(email.get('payload').get('body').get('data')).decode()
         else:
             part = email.get('payload').get("parts")[0]
             data = urlsafe_b64decode(part.get('body').get('data')).decode()
-        pin_code_re = re.search('PIN:\s+(.+?)\s+', data)
+        # use a raw string to avoid the SyntaxWarning
+        pin_code_re = re.search(r'PIN:\s+(.+?)\s+', data)
         pin_code = pin_code_re.group(1) if pin_code_re else None
         return pin_code
 
