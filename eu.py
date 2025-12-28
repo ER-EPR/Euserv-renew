@@ -228,6 +228,7 @@ def login(username: str, password: str) -> (str, requests.session):
             c_id_re = re.search('c_id" value="(.*?)"', r.text)
             c_id = c_id_re.group(1) if c_id_re else None
             pin_code = wait_for_email(request_time)
+            log("[Email PIN Solver] 驗證碼是: {}".format(pin_code))
 
             payload = {
                 "pin": pin_code,
@@ -348,6 +349,7 @@ def renew(
         return False
     
     pin_code = wait_for_email(request_time)
+    log("[Email PIN Solver] 驗證碼是: {}".format(pin_code))
     if not pin_code: return False
 
     r = session.post(url, headers=headers, data={
