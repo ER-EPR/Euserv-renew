@@ -376,31 +376,71 @@ def login(username: str, password: str) -> (str, requests.session):
                 log("[Captcha Solver] 驗證失敗")
                 return "-1", session
 
-        if 'PIN sent to ***' in r.text or 'Enter PIN' in r.text or 'kc2_security_password_dialog_prompt' in r.text:
+        # 改进的PIN码检测逻辑 - 使用更全面的检测条件
+        if ('PIN sent to' in r.text or 
+            'Enter PIN' in r.text or 
+            'kc2_security_password_dialog' in r.text or
+            'name="auth"' in r.text or  # 检查是否有PIN输入框
+            'auth' in r.text or  # 检查是否有auth字段
+            'pin' in r.text.lower()):  # 检查是否有pin相关字段
+            log("[Login] 检测到需要输入PIN码")
             request_time = time.time()
             
-            c_id_re = re.search('c_id" value="(.*?)"', r.text)
+            # 尝试从页面中提取c_id
+            c_id_re = re.search(r'c_id["\']?\s*value["\']?=["\']([^"\']*)["\']', r.text)
             c_id = c_id_re.group(1) if c_id_re else None
+            
+            # 尝试从页面中提取sess_id（如果在表单中有隐藏字段）
+            sess_id_re = re.search(r'sess_id["\']?\s*value["\']?=["\']([^"\']*)["\']', r.text)
+            if sess_id_re:
+                sess_id = sess_id_re.group(1)
+            
             pin_code = wait_for_email(request_time)
             log("[Email PIN Solver] 驗證碼是: {}".format(pin_code))
 
             payload = {
                 "pin": pin_code,
+                "auth": pin_code,  # 尝试使用auth字段
                 "Submit": "Confirm",
                 "subaction": "login",
                 "sess_id": sess_id,
                 "c_id": c_id,
             }
+            
+            # 尝试登录
             r = session.post(url, headers=headers, data=payload)
-            if 'Logout</a>' in r.text and 'enter the PIN that you receive via email' not in r.text:
+            
+            # 检查登录是否成功
+            if 'Logout</a>' in r.text or 'logout' in r.text.lower():
+                log("[Email PIN Solver] PIN验证成功")
                 return sess_id, session
+            elif 'To finish the login process please solve the following captcha.' in r.text:
+                log("[Email PIN Solver] 需要重新进行验证码验证")
+                return "-1", session
             else:
+                log("[Email PIN Solver] PIN验证失败，页面内容: {}".format(r.text[:500]))
                 return "-1", session
         
-        # 修复：添加默认返回，处理既不是验证码也不是PIN码的情况
-        log("[Login] 登录失败，无法识别的页面状态: {}".format(r.text[:500]))  # 只显示前500字符避免输出过长
+        # 如果页面包含登录表单但未成功登录，可能需要进一步分析
+        if 'password' in r.text.lower() and 'login' in r.text.lower():
+            log("[Login] 检测到登录表单，可能需要重新登录")
+            return "-1", session
+        
+        # 添加更详细的调试信息
+        log("[Login] 登录失败，无法识别的页面状态。页面包含的关键信息:")
+        if 'error' in r.text.lower():
+            log("[Login] 页面包含错误信息")
+        if 'security' in r.text.lower():
+            log("[Login] 页面包含安全相关提示")
+        if 'verify' in r.text.lower():
+            log("[Login] 页面包含验证相关提示")
+        if 'confirm' in r.text.lower():
+            log("[Login] 页面包含确认相关提示")
+        
+        log("[Login] 登录失败，无法识别的页面状态: {}".format(r.text[:500]))
         return "-1", session
     else:
+        log("[Login] 登录成功")
         return sess_id, session
 
 
