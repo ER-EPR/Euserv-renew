@@ -39,7 +39,7 @@ LOGIN_MAX_RETRY_COUNT = 5
 
 
 # options: True or False
-TRUECAPTCHA_CHECK_USAGE = True
+TRUECAPTCHA_CHECK_USAGE = False
 
 
 user_agent = (
@@ -500,7 +500,7 @@ def renew(
     if 'A PIN has been sent to your email address' in r.text:
         log('[EUserv] A PIN has been sent to your email address')
     else:
-        log('[EUserv] Send Email failed !')
+        log("[EUserv] Send Email failed ! 返回消息：{}".format(r.text))
         return False
     
     pin_code = wait_for_email(request_time)
