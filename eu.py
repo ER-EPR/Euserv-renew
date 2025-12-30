@@ -370,7 +370,7 @@ def login(username: str, password: str) -> (str, requests.session):
                 )
                 == -1
             ):
-                log("[Captcha Solver] 驗證通過")
+                log("[Captcha Solver] 驗證通過,登录消息：{}".format(r.text))
                 return sess_id, session
             else:
                 log("[Captcha Solver] 驗證失敗")
