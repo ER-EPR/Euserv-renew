@@ -396,6 +396,10 @@ def login(username: str, password: str) -> (str, requests.session):
                 return sess_id, session
             else:
                 return "-1", session
+        
+        # 修复：添加默认返回，处理既不是验证码也不是PIN码的情况
+        log("[Login] 登录失败，无法识别的页面状态: {}".format(r.text[:500]))  # 只显示前500字符避免输出过长
+        return "-1", session
     else:
         return sess_id, session
 
