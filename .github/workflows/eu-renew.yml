@@ -17,12 +17,7 @@ jobs:
   auto_renew:
     runs-on: ubuntu-latest
     environment: production
-    steps:
-      - name: Use the secret
-        run: |
-          echo "The username is ${{ secrets.USERNAME }}"
-          echo "The password is ${{ secrets.PASSWORD }}"
-        
+    steps:  
       - name: 'Checkout codes'
         uses: actions/checkout@v4
 
@@ -39,6 +34,7 @@ jobs:
           python -m pip install --upgrade requests
           python -m pip install --upgrade beautifulsoup4
           python -m pip install --upgrade pysocks
+          python -m pip install --upgrade Pillow
 
       - name: 'Auto_renew'
         env:
