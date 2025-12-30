@@ -6,7 +6,7 @@ on:
   #  branches:
   #    - main
   schedule:
-    - cron: '11 8 * * MON'
+    - cron: '11 12 1 * *'
 
 
 permissions:
