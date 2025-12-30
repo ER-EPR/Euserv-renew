@@ -48,5 +48,7 @@ jobs:
           TRUECAPTCHA_APIKEY: ${{ secrets.TRUECAPTCHA_APIKEY }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_USER_ID: ${{ secrets.TG_USER_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
         run: python eu.py
         
