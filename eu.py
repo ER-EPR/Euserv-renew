@@ -376,7 +376,7 @@ def login(username: str, password: str) -> (str, requests.session):
                 log("[Captcha Solver] 驗證失敗")
                 return "-1", session
 
-        if 'To finish the login process enter the PIN that you receive via email' in r.text:
+        if 'PIN sent to ***' in r.text or 'Enter PIN' in r.text or 'kc2_security_password_dialog_prompt' in r.text:
             request_time = time.time()
             
             c_id_re = re.search('c_id" value="(.*?)"', r.text)
@@ -497,7 +497,7 @@ def renew(
         "prefix":	"kc2_customer_contract_details_extend_contract_",
         "type":	"1",
     })
-    if 'A PIN has been sent to your email address' in r.text:
+    if 'PIN sent to ***' in r.text or 'Enter PIN' in r.text or 'kc2_security_password_dialog_prompt' in r.text:
         log('[EUserv] A PIN has been sent to your email address')
     else:
         log("[EUserv] Send Email failed ! 返回消息：{}".format(r.text))
