@@ -15,6 +15,8 @@ import requests
 from bs4 import BeautifulSoup
 from base64 import urlsafe_b64decode
 from gmail_api import *
+import io
+from PIL import Image
 
 dir_name = os.path.dirname(os.path.abspath(__file__)) + os.sep
 os.chdir(dir_name)
@@ -83,24 +85,176 @@ def login_retry(*args, **kwargs):
 
 def captcha_solver(captcha_image_url: str, session: requests.session) -> dict:
     """
-    TrueCaptcha API doc: https://apitruecaptcha.org/api
-    Free to use 100 requests per day.
+    使用视觉模型或OCR API替换TrueCaptcha API来识别验证码
+    支持OpenAI GPT-4 Vision或阿里云通义千问视觉模型
     """
+    # 获取验证码图片
     response = session.get(captcha_image_url)
-    encoded_string = base64.b64encode(response.content).decode()
-    url = "https://api.apitruecaptcha.org/one/gettext"
+    
+    # 将图片转换为base64格式
+    image_bytes = response.content
+    
+    # 方案1: 使用阿里云通义千问视觉API (推荐)
+    try:
+        result = solve_captcha_with_qwen_vision(image_bytes)
+        if result and "error" not in str(result).lower():
+            if isinstance(result, str):
+                return {"result": result}
+            else:
+                return result
+    except Exception as e:
+        print(f"Qwen Vision API failed: {e}")
+    
+    # 方案2: 使用OpenAI GPT-4 Vision API (如果可用)
+    try:
+        result = solve_captcha_with_openai_vision(image_bytes)
+        if result and "error" not in str(result).lower():
+            if isinstance(result, str):
+                return {"result": result}
+            else:
+                return result
+    except Exception as e:
+        print(f"OpenAI Vision API failed: {e}")
+    
+    # 方案3: 使用本地OCR (Tesseract) 作为备选
+#    try:
+#        result = solve_captcha_with_tesseract(image_bytes)
+#        if result:
+#            return {"result": result}
+#    except Exception as e:
+#        print(f"Tesseract OCR failed: {e}")
+    
+    # 如果所有方法都失败，返回错误信息
+    return {"error": "All captcha solving methods failed"}
 
-    data = {
-        "userid": TRUECAPTCHA_USERID,
-        "apikey": TRUECAPTCHA_APIKEY,
-        "case": "mixed",
-        "mode": "default", #(human | default)
-        "data": encoded_string
-    }
-    r = requests.post(url=url, json=data)
-    j = json.loads(r.text)
-    return j
+def solve_captcha_with_qwen_vision(image_bytes):
+    """
+    使用阿里云通义千问视觉API识别验证码 (OpenAI兼容接口)
+    需要设置以下环境变量:
+    - QWEN_API_KEY: 通义千问API密钥
+    - QWEN_BASE_URL: 通义千问API基础URL (可选，默认为阿里云地址)
+    """
+    import openai
+    
+    api_key = os.getenv("QWEN_API_KEY")
+    if not api_key:
+        raise Exception("QWEN_API_KEY not set")
+    
+    # 设置基础URL，默认为阿里云通义千问API地址
+    base_url = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    
+    # 将图片转换为base64用于发送到API
+    image_base64 = base64.b64encode(image_bytes).decode()
+    
+    # 创建OpenAI客户端，使用阿里云兼容接口
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url=base_url
+    )
+    
+    response = client.chat.completions.create(
+        model="qwen-vl-max",  # 或使用 qwen-vl-plus，根据需要选择
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "This is a captcha image. Extract the text characters from the image. Only respond with the text characters, nothing else. Do not add any explanations or additional text."},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{image_base64}"
+                        }
+                    }
+                ]
+            }
+        ],
+        max_tokens=20,
+        temperature=0.1  # 低温度以获得更准确的识别结果
+    )
+    
+    text_result = response.choices[0].message.content.strip()
+    
+    # 有时候API可能返回额外的解释文本，我们只需要验证码文本
+    # 简单清理可能的多余文本
+    lines = text_result.split('\n')
+    for line in lines:
+        line = line.strip()
+        # 假设验证码是较短的纯字母数字组合
+        if len(line) >= 2 and len(line) <= 10 and line.replace(' ', '').isalnum():
+            return line
+    
+    # 如果没有找到合适的验证码格式，返回第一行内容
+    return lines[0].strip() if lines else text_result
 
+def solve_captcha_with_openai_vision(image_bytes):
+    """
+    使用OpenAI GPT-4 Vision API识别验证码
+    需要设置OPENAI_API_KEY环境变量
+    """
+    import openai
+    
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise Exception("OPENAI_API_KEY not set")
+    
+    # 将图片转换为base64用于发送到API
+    image_base64 = base64.b64encode(image_bytes).decode()
+    
+    client = openai.OpenAI(api_key=api_key)
+    
+    response = client.chat.completions.create(
+        model="gpt-4-vision-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "This is a captcha image. Extract the text characters from the image. Only respond with the text, nothing else."},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{image_base64}"
+                        }
+                    }
+                ]
+            }
+        ],
+        max_tokens=30,
+        temperature=0.1
+    )
+    
+    text_result = response.choices[0].message.content.strip()
+    return text_result
+
+def preprocess_captcha_image(image_bytes):
+    """
+    预处理验证码图片以提高识别准确性
+    """
+    from PIL import Image
+    import cv2
+    import numpy as np
+    
+    # 使用OpenCV进行图像预处理
+    image = Image.open(io.BytesIO(image_bytes))
+    image_np = np.array(image)
+    
+    # 转换为灰度图
+    gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+    
+    # 应用高斯模糊去除噪声
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # 应用阈值处理
+    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # 转换回PIL格式
+    processed_image = Image.fromarray(thresh)
+    
+    # 保存到字节流
+    img_byte_arr = io.BytesIO()
+    processed_image.save(img_byte_arr, format='PNG')
+    img_byte_arr = img_byte_arr.getvalue()
+    
+    return img_byte_arr
 
 def handle_captcha_solved_result(solved: dict) -> str:
     """Since CAPTCHA sometimes appears as a very simple binary arithmetic expression.
