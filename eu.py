@@ -371,7 +371,7 @@ def login(username: str, password: str) -> (str, requests.session):
                 == -1
             ):
                 log("[Captcha Solver] 驗證通過,登录消息：{}".format(r.text))
-                return sess_id, session
+                
             else:
                 log("[Captcha Solver] 驗證失敗")
                 return "-1", session
@@ -420,7 +420,9 @@ def login(username: str, password: str) -> (str, requests.session):
             else:
                 log("[Email PIN Solver] PIN验证失败，页面内容: {}".format(r.text[:500]))
                 return "-1", session
-        
+        # 如果既没有 PIN 请求，页面又有登录成功的特征
+        if 'Logout</a>' in r.text or 'Hello' in r.text:
+            return sess_id, session
         # 如果页面包含登录表单但未成功登录，可能需要进一步分析
         if 'password' in r.text.lower() and 'login' in r.text.lower():
             log("[Login] 检测到登录表单，可能需要重新登录")
