@@ -512,15 +512,15 @@ import traceback
 
 def wait_for_email(request_time):
     """
-    兼容原函数签名的 IMAP 邮件收取实现
+    兼容原函数签名的 IMAP 邮件收取实现（精准提取6位数字PIN）
     参数: request_time (float) - 请求发送邮件的时间戳
-    返回: PIN 码字符串 或 None（原代码中返回 False，但 None 在布尔判断中等效）
+    返回: 6位数字PIN字符串 或 None（兼容原逻辑中 if not pin_code 判断）
     """
-    # 从环境变量获取 IMAP 凭据（兼容原 userId 全局变量，但实际使用环境变量）
+    # 优先从环境变量获取凭据
     gmail_address = os.environ.get("GMAIL_ADDRESS", getattr(globals(), 'userId', None))
     app_password = os.environ.get("GMAIL_APP_PASSWORD")
     
-    # 兼容旧配置：尝试从 token 文件提取邮箱（向后兼容）
+    # 兼容旧配置：尝试从 token 文件提取邮箱
     if not gmail_address and os.path.exists(f'token_{userId}.json'):
         try:
             with open(f'token_{userId}.json') as f:
@@ -534,13 +534,12 @@ def wait_for_email(request_time):
         log("   export GMAIL_ADDRESS='your@gmail.com'")
         log("   export GMAIL_APP_PASSWORD='16位应用专用密码（无空格）'")
         log("   💡 生成方法: Google账号 → 安全 → 两步验证 → 应用专用密码")
-        return None  # 兼容原逻辑（if not pin_code 判断）
+        return None
     
     # 脱敏显示邮箱
     masked_email = gmail_address[:3] + "****" + ("@" + gmail_address.split("@")[-1] if "@" in gmail_address else "")
     log(f"[Email] IMAP 连接邮箱: {masked_email}")
     
-    # 创建安全 SSL 上下文
     context = ssl.create_default_context()
     
     try:
@@ -555,7 +554,7 @@ def wait_for_email(request_time):
                     raise
                 time.sleep(3)
         
-        # 登录（带错误诊断）
+        # 登录
         try:
             mail.login(gmail_address, app_password)
             log("[Email] ✅ IMAP 登录成功")
@@ -581,7 +580,7 @@ def wait_for_email(request_time):
         
         while time.time() - start_time < timeout:
             try:
-                mail.select("INBOX", readonly=False)  # readonly=False 允许标记已读
+                mail.select("INBOX", readonly=False)
                 
                 # 搜索未读邮件（主题含关键词）
                 status, messages = mail.search(None, f'(UNSEEN SUBJECT "{PIN_KEY_WORD}")')
@@ -605,13 +604,15 @@ def wait_for_email(request_time):
                         raw_email = msg_data[0][1]
                         msg = email.message_from_bytes(raw_email)
                         
-                        # 解析邮件时间（INTERNALDATE 更可靠）
-                        internaldate = email.utils.parsedate_to_datetime(
-                            mail.fetch(email_id, "(INTERNALDATE)")[1][0].decode().split('"')[1]
-                        ).timestamp()
+                        # 解析邮件时间
+                        try:
+                            date_tuple = email.utils.parsedate_tz(msg.get("Date"))
+                            email_timestamp = email.utils.mktime_tz(date_tuple) if date_tuple else time.time()
+                        except:
+                            email_timestamp = time.time()
                         
                         # 跳过过早的邮件（允许8秒误差）
-                        if internaldate < request_time - 8:
+                        if email_timestamp < request_time - 8:
                             continue
                         
                         # 解码主题
@@ -645,28 +646,15 @@ def wait_for_email(request_time):
                             except:
                                 pass
                         
-                        # 调试：打印邮件片段（脱敏处理数字）
-                        snippet = re.sub(r'\d{4,}', '****', body[:250])
-                        log(f"[Email] 内容片段: {snippet}")
+                        # === 精准 PIN 提取逻辑（核心修复）===
+                        pin_code = extract_pin_from_body(body)
+                        # === 精准 PIN 提取逻辑结束 ===
                         
-                        # 多模式提取 PIN
-                        pin_patterns = [
-                            r'PIN[:：\s]*([A-Za-z0-9]{4,8})',
-                            r'verification\s+code[:：\s]*([A-Za-z0-9]{4,8})',
-                            r'code[:：\s]*([A-Za-z0-9]{4,8})',
-                            r'\b(\d{6})\b'  # 6位纯数字
-                        ]
-                        
-                        for pattern in pin_patterns:
-                            match = re.search(pattern, body, re.IGNORECASE)
-                            if match:
-                                pin_code = match.group(1).strip()
-                                # 额外验证：排除明显无效值
-                                if len(pin_code) >= 4 and re.match(r'^[A-Za-z0-9]{4,8}$', pin_code):
-                                    log(f"[Email] ✅ 提取到有效 PIN: {pin_code}")
-                                    # 标记为已读
-                                    mail.store(email_id, '+FLAGS', '\\Seen')
-                                    raise StopIteration  # 跳出多层循环
+                        if pin_code:
+                            log(f"[Email] ✅ 提取到有效 PIN: {pin_code}")
+                            # 标记为已读
+                            mail.store(email_id, '+FLAGS', '\\Seen')
+                            raise StopIteration  # 跳出多层循环
                         
                     except StopIteration:
                         break
@@ -698,47 +686,61 @@ def wait_for_email(request_time):
         
         if not pin_code:
             log(f"[Email] ❌ 超时 ({timeout}s)：未收到含 PIN 的邮件")
-            # 尝试搜索已读邮件作为最后手段（防止标记问题）
-            log("[Email] 尝试搜索最近5分钟所有邮件（包括已读）...")
-            try:
-                mail = imaplib.IMAP4_SSL("imap.gmail.com", 993, ssl_context=context)
-                mail.login(gmail_address, app_password)
-                mail.select("INBOX")
-                
-                # 搜索最近5分钟的邮件
-                since = time.strftime("%d-%b-%Y", time.localtime(time.time() - 300))
-                status, messages = mail.search(None, f'(SINCE "{since}")')
-                if status == "OK" and messages[0]:
-                    for email_id in reversed(messages[0].split()[-5:]):  # 最近5封
-                        status, msg_data = mail.fetch(email_id, "(RFC822)")
-                        if status == "OK":
-                            msg = email.message_from_bytes(msg_data[0][1])
-                            body = ""
-                            if msg.is_multipart():
-                                for part in msg.walk():
-                                    if part.get_content_type() == "text/plain":
-                                        body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
-                                        break
-                            else:
-                                body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")
-                            
-                            for pattern in [r'PIN[:\s]*([A-Za-z0-9]{4,8})', r'\b(\d{6})\b']:
-                                match = re.search(pattern, body)
-                                if match:
-                                    pin_code = match.group(1)
-                                    log(f"[Email] ⚠️ 从已读邮件提取 PIN: {pin_code}")
-                                    break
-                mail.logout()
-            except:
-                pass
         
-        return pin_code if pin_code else None  # 兼容原逻辑（返回 None 等效于 False）
+        return pin_code if pin_code else None
         
     except Exception as e:
         log(f"[Email] IMAP 意外错误: {str(e)}")
         log(f"[Email] 详细堆栈:\n{traceback.format_exc()}")
         return None
 
+def extract_pin_from_body(body: str) -> str:
+    """
+    精准提取 EUserv PIN：必须是 6 位纯数字，且出现在 "PIN" 关键字后 30 字符内
+    """
+    # 标准化：移除多余空白，但保留换行（PIN 通常在下一行）
+    normalized_body = re.sub(r'[ \t]+', ' ', body)
+    
+    # 查找所有 "PIN" 关键字位置（不区分大小写，带单词边界）
+    pin_positions = []
+    for match in re.finditer(r'\b[Pp][Ii][Nn]\b', normalized_body):
+        pin_positions.append(match.start())
+    
+    # 如果没找到带边界的，尝试宽松匹配（兼容格式变化）
+    if not pin_positions:
+        for match in re.finditer(r'[Pp][Ii][Nn]', normalized_body):
+            pin_positions.append(match.start())
+    
+    log(f"[Email] 检测到 {len(pin_positions)} 处 'PIN' 关键字位置")
+    
+    # 按位置顺序检查（从后往前更可能匹配最新PIN，但EUserv邮件通常只有一个）
+    for pos in sorted(pin_positions, reverse=True):
+        # 检查后续 30 字符内（覆盖换行和空格）
+        search_end = min(pos + 30, len(normalized_body))
+        snippet = normalized_body[pos:search_end]
+        
+        # 调试：打印脱敏片段
+        snippet_masked = re.sub(r'\d', '*', snippet[:25])
+        log(f"[Email] 检查 PIN 位置 {pos} 附近: '{snippet_masked}...'")
+        
+        # 在片段中查找 6 位连续数字（必须是独立数字，前后非数字）
+        num_match = re.search(r'(?<!\d)\d{6}(?!\d)', snippet)
+        if num_match:
+            candidate = num_match.group(0)
+            # 额外验证：必须是纯6位数字
+            if re.fullmatch(r'\d{6}', candidate):
+                log(f"[Email] ✅ 在 PIN 后 {num_match.start()} 字符处找到 6 位数字: {candidate}")
+                return candidate
+    
+    # 后备方案：全文搜索 6 位数字（仅当附近无匹配时）
+    num_match = re.search(r'(?<!\d)\d{6}(?!\d)', normalized_body)
+    if num_match:
+        candidate = num_match.group(0)
+        log(f"[Email] ⚠️ 未在 PIN 附近找到，使用全文首个 6 位数字: {candidate}")
+        return candidate if re.fullmatch(r'\d{6}', candidate) else None
+    
+    log("[Email] 未找到符合要求的 6 位数字 PIN")
+    return None
 def renew(
     sess_id: str, session: requests.session, password: str, order_id: str
 ) -> bool:
