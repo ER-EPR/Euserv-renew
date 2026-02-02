@@ -397,7 +397,13 @@ def login(username: str, password: str) -> (str, requests.session):
             
             pin_code = wait_for_email(request_time)
             log("[Email PIN Solver] 驗證碼是: {}".format(pin_code))
-
+            # 严格校验：必须是非空字符串
+            if not pin_code or not isinstance(pin_code, str) or not pin_code.strip():
+                log("[Email PIN Solver] ❌ 无效 PIN（空值/非字符串），终止登录")
+                return "-1", session
+            pin_code = pin_code.strip()
+            log(f"[Email PIN Solver] ✅ 使用 PIN: {pin_code}")
+                        
             payload = {
                 "pin": pin_code,
                 "auth": pin_code,  # 尝试使用auth字段
@@ -406,7 +412,6 @@ def login(username: str, password: str) -> (str, requests.session):
                 "sess_id": sess_id,
                 "c_id": c_id,
             }
-            
             # 尝试登录
             r = session.post(url, headers=headers, data=payload)
             
@@ -472,19 +477,32 @@ def get_servers(sess_id: str, session: requests.session) -> {}:
 
 
 def get_verification_code(service, email_id, request_time):
-    email = service.users().messages().get(userId='me', id=email_id.get('id')).execute()
-    internalDate = float(email.get("internalDate")) / 1000
-
-    if internalDate > request_time - 8:
-        if email.get('payload').get('body').get('size'):
-            data = urlsafe_b64decode(email.get('payload').get('body').get('data')).decode()
+    try:
+        email = service.users().messages().get(userId='me', id=email_id['id']).execute()
+        internal_date = float(email.get("internalDate", 0)) / 1000
+        subject = next((h['value'] for h in email['payload']['headers'] if h['name'] == 'Subject'), 'N/A')
+        
+        if internal_date <= request_time - 8:
+            log(f"[Email] 邮件时间过早（主题: {subject}），跳过")
+            return None
+        
+        # 提取邮件正文
+        if email['payload'].get('body', {}).get('size'):
+            data = urlsafe_b64decode(email['payload']['body']['data']).decode(errors='ignore')
         else:
-            part = email.get('payload').get("parts")[0]
-            data = urlsafe_b64decode(part.get('body').get('data')).decode()
-        # use a raw string to avoid the SyntaxWarning
-        pin_code_re = re.search(r'PIN:\s+(.+?)\s+', data)
-        pin_code = pin_code_re.group(1) if pin_code_re else None
-        return pin_code
+            parts = email['payload'].get('parts', [])
+            data = urlsafe_b64decode(parts[0]['body']['data']).decode(errors='ignore') if parts else ""
+        
+        # 调试：记录邮件片段（脱敏）
+        log(f"[Email] 解析邮件（主题: {subject}），内容前200字符: {data[:200]}")
+        pin_match = re.search(r'PIN:\s*([A-Za-z0-9]{4,8})', data)  # 更健壮的正则
+        if pin_match:
+            return pin_match.group(1)
+        log("[Email] 未匹配到 PIN 格式（检查正则表达式）")
+        return None
+    except Exception as e:
+        log(f"[Email] 邮件解析异常: {str(e)}")
+        return None
 
 def wait_for_email(request_time):
     try:
