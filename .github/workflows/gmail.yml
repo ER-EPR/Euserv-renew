@@ -13,43 +13,9 @@ permissions:
   contents: write
 
 jobs:
-        
-  copy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out the code
-        uses: actions/checkout@v4
-
-      #- name: Set up Node.js
-      #  uses: actions/setup-node@v4
-      #  with:
-      #    node-version: "latest"
-
-      - name: Clone gmail_api
-        run: |
-          wget -O gmail_api.py https://raw.githubusercontent.com/SAOJSM/EU_CHICK_EXTEND_CHT/refs/heads/main/gmail_api.py
-      
-      - name: Clone eu
-        run: |
-          wget -O eu.py https://raw.githubusercontent.com/SAOJSM/EU_CHICK_EXTEND_CHT/refs/heads/main/eu.py
-      
-
-      - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          branch: main
-          commit_message: ':arrow_up: update latest euserv'
-          commit_author: 'github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
-          push_options: '--set-upstream'
-  auto_renew:
+  gmail_refresh:
     runs-on: ubuntu-latest
     steps:
-      - name: Use the secret
-        run: |
-          echo "The username is ${{ secrets.USERNAME }}"
-          echo "The password is ${{ secrets.PASSWORD }}"
-        
       - name: 'Checkout codes'
         uses: actions/checkout@v4
 
@@ -57,6 +23,11 @@ jobs:
         uses: actions/setup-python@v1
         with:
           python-version: '3.x'
+
+      - name: Setup Firefox
+        uses: browser-actions/setup-firefox@v1
+        with:
+          firefox-version: 'latest' # Options: 'latest', 'latest-esr', or specific versions like '120.0'
 
       - name: 'Install dependencies'
         run: |
@@ -67,10 +38,7 @@ jobs:
           python -m pip install --upgrade beautifulsoup4
           python -m pip install --upgrade pysocks
 
-      - name: 'Auto_renew'
-        env:
-          USERNAME: ${{ secrets.USERNAME }}
-          PASSWORD: ${{ secrets.PASSWORD }}
+      - name: 'refresh credantial'
         run: python gmail_api.py stayawake.xc@gmail.com
         
       - name: Commit changes
