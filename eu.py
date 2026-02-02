@@ -507,9 +507,6 @@ def get_verification_code(service, email_id, request_time):
 import imaplib
 import email
 from email.header import decode_header
-import time
-import re
-import os
 import ssl
 import traceback
 
