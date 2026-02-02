@@ -504,45 +504,242 @@ def get_verification_code(service, email_id, request_time):
         log(f"[Email] 邮件解析异常: {str(e)}")
         return None
 
+import imaplib
+import email
+from email.header import decode_header
+import time
+import re
+import os
+import ssl
+import traceback
+
 def wait_for_email(request_time):
+    """
+    兼容原函数签名的 IMAP 邮件收取实现
+    参数: request_time (float) - 请求发送邮件的时间戳
+    返回: PIN 码字符串 或 None（原代码中返回 False，但 None 在布尔判断中等效）
+    """
+    # 从环境变量获取 IMAP 凭据（兼容原 userId 全局变量，但实际使用环境变量）
+    gmail_address = os.environ.get("GMAIL_ADDRESS", getattr(globals(), 'userId', None))
+    app_password = os.environ.get("GMAIL_APP_PASSWORD")
+    
+    # 兼容旧配置：尝试从 token 文件提取邮箱（向后兼容）
+    if not gmail_address and os.path.exists(f'token_{userId}.json'):
+        try:
+            with open(f'token_{userId}.json') as f:
+                token_data = json.load(f)
+                gmail_address = token_data.get('account') or userId
+        except:
+            pass
+    
+    if not gmail_address or not app_password:
+        log("[Email] ❌ 未配置邮箱凭据！请设置环境变量:")
+        log("   export GMAIL_ADDRESS='your@gmail.com'")
+        log("   export GMAIL_APP_PASSWORD='16位应用专用密码（无空格）'")
+        log("   💡 生成方法: Google账号 → 安全 → 两步验证 → 应用专用密码")
+        return None  # 兼容原逻辑（if not pin_code 判断）
+    
+    # 脱敏显示邮箱
+    masked_email = gmail_address[:3] + "****" + ("@" + gmail_address.split("@")[-1] if "@" in gmail_address else "")
+    log(f"[Email] IMAP 连接邮箱: {masked_email}")
+    
+    # 创建安全 SSL 上下文
+    context = ssl.create_default_context()
+    
     try:
-        service = gmail_authenticate(userId=userId)
-        start_wait = time.time()
-        log(f"[Email] 开始监听邮箱（关键词: {PIN_KEY_WORD}），超时: 120s")
-        
-        while time.time() < request_time + 120:
+        # 连接 Gmail IMAP 服务器（带重试）
+        for attempt in range(3):
             try:
-                results = search_messages(service, PIN_KEY_WORD)
-                log(f"[Email] 搜索结果数量: {len(results) if results else 0}")
-                
-                if results:
-                    pin_code = get_verification_code(service, results[0], request_time)
-                    if pin_code:
-                        log(f"[Email] ✅ 成功提取 PIN: {pin_code}")
-                        return pin_code
-                    else:
-                        log("[Email] ⚠️ 找到邮件但未解析出 PIN（检查正则/邮件格式）")
-            except Exception as e:
-                log(f"[Email] 搜索/解析邮件异常: {str(e)}")
-            
-            time.sleep(5)
+                mail = imaplib.IMAP4_SSL("imap.gmail.com", 993, ssl_context=context, timeout=30)
+                break
+            except (imaplib.IMAP4.error, TimeoutError, ConnectionError) as e:
+                log(f"[Email] 连接失败 (尝试 {attempt+1}/3): {str(e)[:50]}")
+                if attempt == 2:
+                    raise
+                time.sleep(3)
         
-        log(f"[Email] ❌ 超时（耗时 {time.time()-start_wait:.1f}s）：未收到含 PIN 的邮件")
-        return None  # 明确返回 None 而非 False
+        # 登录（带错误诊断）
+        try:
+            mail.login(gmail_address, app_password)
+            log("[Email] ✅ IMAP 登录成功")
+        except imaplib.IMAP4.error as e:
+            err_str = str(e).lower()
+            if "authentication failed" in err_str:
+                log("[Email] 🔑 认证失败！请检查:")
+                log("   1. 是否开启 Gmail 两步验证")
+                log("   2. 应用专用密码是否为 16 位（无空格）")
+                log("   3. 是否误用 Gmail 登录密码（必须用应用专用密码）")
+            elif "please log in via your web browser" in err_str:
+                log("[Email] 🔐 Google 安全拦截！请访问:")
+                log("   https://accounts.google.com/DisplayUnlockCaptcha")
+                log("   点击'继续'解锁后重试")
+            else:
+                log(f"[Email] IMAP 错误: {str(e)}")
+            return None
+        
+        start_time = time.time()
+        pin_code = None
+        poll_interval = 5
+        timeout = 120
+        
+        while time.time() - start_time < timeout:
+            try:
+                mail.select("INBOX", readonly=False)  # readonly=False 允许标记已读
+                
+                # 搜索未读邮件（主题含关键词）
+                status, messages = mail.search(None, f'(UNSEEN SUBJECT "{PIN_KEY_WORD}")')
+                
+                if status != "OK":
+                    log(f"[Email] 搜索失败: {messages}")
+                    time.sleep(poll_interval)
+                    continue
+                
+                email_ids = messages[0].split()
+                log(f"[Email] 检测到 {len(email_ids)} 封未读相关邮件")
+                
+                # 按时间倒序处理（最新优先）
+                for email_id in reversed(email_ids):
+                    try:
+                        # 获取邮件数据
+                        status, msg_data = mail.fetch(email_id, "(RFC822 INTERNALDATE)")
+                        if status != "OK" or not msg_data[0]:
+                            continue
+                        
+                        raw_email = msg_data[0][1]
+                        msg = email.message_from_bytes(raw_email)
+                        
+                        # 解析邮件时间（INTERNALDATE 更可靠）
+                        internaldate = email.utils.parsedate_to_datetime(
+                            mail.fetch(email_id, "(INTERNALDATE)")[1][0].decode().split('"')[1]
+                        ).timestamp()
+                        
+                        # 跳过过早的邮件（允许8秒误差）
+                        if internaldate < request_time - 8:
+                            continue
+                        
+                        # 解码主题
+                        subject = ""
+                        if msg["Subject"]:
+                            subj_parts = decode_header(msg["Subject"])
+                            subject = "".join(
+                                part.decode(enc or "utf-8", errors="ignore") if isinstance(part, bytes) else part
+                                for part, enc in subj_parts
+                            )
+                        
+                        log(f"[Email] 处理邮件 - 主题: {subject[:60]}")
+                        
+                        # 提取正文
+                        body = ""
+                        if msg.is_multipart():
+                            for part in msg.walk():
+                                if part.get_content_type() == "text/plain" and not part.get_filename():
+                                    try:
+                                        payload = part.get_payload(decode=True)
+                                        charset = part.get_content_charset() or "utf-8"
+                                        body = payload.decode(charset, errors="ignore")
+                                        break
+                                    except:
+                                        continue
+                        else:
+                            try:
+                                payload = msg.get_payload(decode=True)
+                                charset = msg.get_content_charset() or "utf-8"
+                                body = payload.decode(charset, errors="ignore")
+                            except:
+                                pass
+                        
+                        # 调试：打印邮件片段（脱敏处理数字）
+                        snippet = re.sub(r'\d{4,}', '****', body[:250])
+                        log(f"[Email] 内容片段: {snippet}")
+                        
+                        # 多模式提取 PIN
+                        pin_patterns = [
+                            r'PIN[:：\s]*([A-Za-z0-9]{4,8})',
+                            r'verification\s+code[:：\s]*([A-Za-z0-9]{4,8})',
+                            r'code[:：\s]*([A-Za-z0-9]{4,8})',
+                            r'\b(\d{6})\b'  # 6位纯数字
+                        ]
+                        
+                        for pattern in pin_patterns:
+                            match = re.search(pattern, body, re.IGNORECASE)
+                            if match:
+                                pin_code = match.group(1).strip()
+                                # 额外验证：排除明显无效值
+                                if len(pin_code) >= 4 and re.match(r'^[A-Za-z0-9]{4,8}$', pin_code):
+                                    log(f"[Email] ✅ 提取到有效 PIN: {pin_code}")
+                                    # 标记为已读
+                                    mail.store(email_id, '+FLAGS', '\\Seen')
+                                    raise StopIteration  # 跳出多层循环
+                        
+                    except StopIteration:
+                        break
+                    except Exception as e:
+                        log(f"[Email] 处理邮件异常: {str(e)[:80]}")
+                        continue
+                
+                if pin_code:
+                    break
+                
+                elapsed = time.time() - start_time
+                log(f"[Email] 未找到 PIN ({elapsed:.0f}/{timeout}s)，{poll_interval}秒后重试...")
+                time.sleep(poll_interval)
+                
+            except Exception as e:
+                log(f"[Email] 检查邮件异常: {str(e)[:80]}")
+                time.sleep(poll_interval)
+                continue
+        
+        # 安全关闭连接
+        try:
+            mail.close()
+        except:
+            pass
+        try:
+            mail.logout()
+        except:
+            pass
+        
+        if not pin_code:
+            log(f"[Email] ❌ 超时 ({timeout}s)：未收到含 PIN 的邮件")
+            # 尝试搜索已读邮件作为最后手段（防止标记问题）
+            log("[Email] 尝试搜索最近5分钟所有邮件（包括已读）...")
+            try:
+                mail = imaplib.IMAP4_SSL("imap.gmail.com", 993, ssl_context=context)
+                mail.login(gmail_address, app_password)
+                mail.select("INBOX")
+                
+                # 搜索最近5分钟的邮件
+                since = time.strftime("%d-%b-%Y", time.localtime(time.time() - 300))
+                status, messages = mail.search(None, f'(SINCE "{since}")')
+                if status == "OK" and messages[0]:
+                    for email_id in reversed(messages[0].split()[-5:]):  # 最近5封
+                        status, msg_data = mail.fetch(email_id, "(RFC822)")
+                        if status == "OK":
+                            msg = email.message_from_bytes(msg_data[0][1])
+                            body = ""
+                            if msg.is_multipart():
+                                for part in msg.walk():
+                                    if part.get_content_type() == "text/plain":
+                                        body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
+                                        break
+                            else:
+                                body = msg.get_payload(decode=True).decode("utf-8", errors="ignore")
+                            
+                            for pattern in [r'PIN[:\s]*([A-Za-z0-9]{4,8})', r'\b(\d{6})\b']:
+                                match = re.search(pattern, body)
+                                if match:
+                                    pin_code = match.group(1)
+                                    log(f"[Email] ⚠️ 从已读邮件提取 PIN: {pin_code}")
+                                    break
+                mail.logout()
+            except:
+                pass
+        
+        return pin_code if pin_code else None  # 兼容原逻辑（返回 None 等效于 False）
         
     except Exception as e:
-        import traceback
-        err_str = str(e).lower()
-        if "invalid_grant" in err_str:
-            log("[Email] 🔑 Gmail API 认证失败！原因：OAuth 令牌过期/无效")
-            log("[Email] 💡 解决方案：")
-            log("   1. 删除 token.json（如有）")
-            log("   2. 重新运行认证流程生成新令牌")
-            log("   3. 检查环境变量 GOOGLE_APPLICATION_CREDENTIALS 是否正确")
-        elif "unauthorized" in err_str or "401" in err_str:
-            log("[Email] 🔑 Gmail API 权限不足，请检查 OAuth 范围配置")
-        
-        log(f"[Email] 堆栈跟踪:\n{traceback.format_exc()}")
+        log(f"[Email] IMAP 意外错误: {str(e)}")
+        log(f"[Email] 详细堆栈:\n{traceback.format_exc()}")
         return None
 
 def renew(
