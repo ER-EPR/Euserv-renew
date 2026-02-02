@@ -489,23 +489,43 @@ def get_verification_code(service, email_id, request_time):
 def wait_for_email(request_time):
     try:
         service = gmail_authenticate(userId=userId)
-        # get emails that match the query you specify from the command lines
-        while time.time() < request_time + 120: # wait 2 min
-            results = search_messages(service, PIN_KEY_WORD)
-            print('Email id search result:' , results)
-            # for each email matched, read it (output plain/text to console & save HTML and attachments)
-            if results:
-                pin_code = get_verification_code(service, results[0], request_time)
-                if pin_code:
-                    log('[Email] pin code:' + pin_code)
-                    return pin_code
+        start_wait = time.time()
+        log(f"[Email] 开始监听邮箱（关键词: {PIN_KEY_WORD}），超时: 120s")
+        
+        while time.time() < request_time + 120:
+            try:
+                results = search_messages(service, PIN_KEY_WORD)
+                log(f"[Email] 搜索结果数量: {len(results) if results else 0}")
+                
+                if results:
+                    pin_code = get_verification_code(service, results[0], request_time)
+                    if pin_code:
+                        log(f"[Email] ✅ 成功提取 PIN: {pin_code}")
+                        return pin_code
+                    else:
+                        log("[Email] ⚠️ 找到邮件但未解析出 PIN（检查正则/邮件格式）")
+            except Exception as e:
+                log(f"[Email] 搜索/解析邮件异常: {str(e)}")
+            
             time.sleep(5)
-        else:
-            log('[Email] Did not receive the email in 2 minutes.')
-            return False
-    except BaseException as e:
-        log('[Email] ' + str(e))
-        return False
+        
+        log(f"[Email] ❌ 超时（耗时 {time.time()-start_wait:.1f}s）：未收到含 PIN 的邮件")
+        return None  # 明确返回 None 而非 False
+        
+    except Exception as e:
+        import traceback
+        err_str = str(e).lower()
+        if "invalid_grant" in err_str:
+            log("[Email] 🔑 Gmail API 认证失败！原因：OAuth 令牌过期/无效")
+            log("[Email] 💡 解决方案：")
+            log("   1. 删除 token.json（如有）")
+            log("   2. 重新运行认证流程生成新令牌")
+            log("   3. 检查环境变量 GOOGLE_APPLICATION_CREDENTIALS 是否正确")
+        elif "unauthorized" in err_str or "401" in err_str:
+            log("[Email] 🔑 Gmail API 权限不足，请检查 OAuth 范围配置")
+        
+        log(f"[Email] 堆栈跟踪:\n{traceback.format_exc()}")
+        return None
 
 def renew(
     sess_id: str, session: requests.session, password: str, order_id: str
