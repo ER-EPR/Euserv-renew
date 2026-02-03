@@ -25,37 +25,20 @@ PASSWORD = os.environ.get("EUSERV_PASSWORD", "你的德雞密碼")
 [Bot Father] https://t.me/BotFather 並複製Bot Token
 [複製Telegram ID] https://t.me/userinfobot
 步驟1
-# [取得Gmail API] https://console.cloud.google.com/
-1-1 登入接收德雞PIN CODE的帳戶
-1-2 新建應用程式(建議名稱設定為Gmail比較好找)
-1-3 搜尋 Gmail API 並啟用
-步驟2
-2-1 點擊OAuth 同意畫面
-2-2 設定名稱為GMAIL VERIFY
-2-3 填寫使用者支援電子郵件、開發人員聯絡資訊(填自己的EMAIL)
-2-4 之後一直點繼續直到摘要
-2-5 點擊ADD USER
-2-6 填入自己的EMAIL
-因自己要用，所以沒必要發布
-步驟3
-3-1 點擊憑證
-3-2 建立憑證→OAuth 2.0 用戶端 ID
-3-3 名稱:GMAIL
-3-4 已授權的重新導向 URI:http://localhost:36666/
-3-5 點擊儲存
-3-6 下載JSON，並改名為credentials.json
-步驟4
-4-1 打開VPS
-4-2 把credentials.json及本專案的eu.py、gmail_api.py放入vps主目錄
-wget https://raw.githubusercontent.com/SAOJSM/EU_CHICK_EXTEND_CHT/main/gmail_api.py
-wget https://raw.githubusercontent.com/SAOJSM/EU_CHICK_EXTEND_CHT/main/eu.py
-一般為/root，若非root用戶主目錄為/home
-4-3 首次執行請使用windows，第二次執行再使用vps輸入以下指令
-pip3 install --upgrade google-api-python-client google-auth-httplib2 google-auth-oauthlib beautifulsoup4 requests pysocks 
-備註:Windows同樣要有eu.py、gmail_api.py、credential.json
-4-4 首次執行安裝完成依賴項輸入以下指令 並黏貼網址到瀏覽器同意授權
-python3 gmail_api.py 你的email  
-4-5 授權完成後取得"token_你的email.json"
+# [取得Gmail IMAP] 
+Prerequisites
+Enable 2-Step Verification: You must have 2-Step Verification turned on; otherwise, the "App Passwords" option will not appear.
+IMAP Access: Ensure IMAP is enabled in your Gmail Settings under the Forwarding and POP/IMAP tab. 
+How to Create the App Password
+Go to your Google Account Security Settings.
+Scroll down to the "How you sign in to Google" section and select 2-Step Verification.
+Scroll to the very bottom and click on App passwords.
+Tip: If you can't find it, use the search bar at the top of the Google Account page and type "App passwords".
+Enter a custom name for the app (e.g., "Server Email Sync") and click Create.
+Google will display a 16-character code. This is your IMAP password.
+#创建secret：
+GMAIL_ADDRESS
+GMAIL_APP_PASSWORD
 4-6 輸入 python3 eu.py
 4-7 等待程式完成，TG機器人會通知
 步驟5
