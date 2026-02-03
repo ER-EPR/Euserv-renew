@@ -36,13 +36,10 @@ Scroll to the very bottom and click on App passwords.
 Tip: If you can't find it, use the search bar at the top of the Google Account page and type "App passwords".
 Enter a custom name for the app (e.g., "Server Email Sync") and click Create.
 Google will display a 16-character code. This is your IMAP password.
-#创建secret：
+# 创建secret：
 GMAIL_ADDRESS
 GMAIL_APP_PASSWORD
-4-6 輸入 python3 eu.py
-4-7 等待程式完成，TG機器人會通知
-步驟5
-5-1 成功執行程式後 將"token_你的email.json"複製回vps 並將eu.py排入定時任務
+# 將eu.py排入定時任務
  crontab -e  
 
  0 1 * * * /usr/bin/python3 /root/eu.py  
